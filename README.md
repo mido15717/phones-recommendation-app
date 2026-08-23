@@ -15,7 +15,7 @@ This is a simple phone recommendation app that helps users find the best phone b
    ```
 
 2. download and install Miniconda or Anaconda from the official website: https://www.anaconda.com/docs/getting-started/miniconda/install
-```bash
+   ```bash
    conda create -n phone-recommendation-app python=3.8
    conda activate phone-recommendation-app
    ```
@@ -24,3 +24,9 @@ This is a simple phone recommendation app that helps users find the best phone b
    ```bash
    pip install -r requirements.txt
    ```
+
+4. Setup environment variables
+   ```bash
+   $ cp .env.example .env
+   ```
+Set your environment variables in the .env like your API_KEY value.
