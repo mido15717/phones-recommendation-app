@@ -4,7 +4,7 @@ This is a simple phone recommendation app that helps users find the best phone b
 
 ## Requirements
 
-- python 3.8 or higher
+- python 3.11
 
 ### Installation
 
