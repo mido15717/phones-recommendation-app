@@ -27,6 +27,11 @@ This is a simple phone recommendation app that helps users find the best phone b
 
 4. Setup environment variables
    ```bash
-   $ cp .env.example .env
+   $ cp .env .env.example
    ```
 Set your environment variables in the .env like your API_KEY value.
+
+5. Run FastAPI server
+   ```bash
+   $ uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   ```
