@@ -1,17 +1,11 @@
 import pandas as pd
+from core.logger import logger
 
 
 class DataCleaningService:
     """Cleans raw scraped phone listings into a structured DataFrame."""
 
     NETWORK_TOKENS = {"5G", "4G", "4G LTE", "3G", "LTE"}
-
-    def __init__(self, verbose: bool = False):
-        self.verbose = verbose
-
-    def _log(self, msg: str) -> None:
-        if self.verbose:
-            print(msg)
 
     def parse_model_name(self, raw: str) -> dict:
         result = {"model": None, "storage_gb": None, "ram_gb": None,
@@ -46,20 +40,24 @@ class DataCleaningService:
         return result
 
     def parse_all(self, df: pd.DataFrame) -> pd.DataFrame:
+        logger.info(f"Parsing model_name for {len(df)} rows")
         parsed = df["model_name"].apply(self.parse_model_name).apply(pd.Series)
         out = pd.concat([df, parsed], axis=1)
         out["is_feature_phone"] = out["storage_gb"].isna() & out["ram_gb"].isna()
+
+        n_feature_phones = out["is_feature_phone"].sum()
+        logger.info(f"Parsed {len(out)} rows ({n_feature_phones} feature phones flagged)")
         return out
 
     def fix_ram_storage_swap(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         outliers = df[df["ram_gb"] > df["storage_gb"]]
-        self._log(f"Outliers (RAM > storage): {len(outliers)}")
+        logger.info(f"Outliers (RAM > storage): {len(outliers)}")
 
         for _, row in outliers.iterrows():
-            self._log(
-                f"Model: {row['variant_id']}, {row['model']}, "
-                f"RAM: {row['ram_gb']}GB, Storage: {row['storage_gb']}GB"
+            logger.warning(
+                f"Swapping RAM/storage for variant_id={row['variant_id']} "
+                f"({row['model']}): RAM {row['ram_gb']}GB, Storage {row['storage_gb']}GB"
             )
 
         outlier_ids = outliers["variant_id"].tolist()
@@ -70,7 +68,9 @@ class DataCleaningService:
 
     def clean(self, df: pd.DataFrame) -> pd.DataFrame:
         """Full pipeline: parse model names, fix RAM/storage swaps, drop scrape metadata."""
+        logger.info(f"Starting cleaning pipeline on {len(df)} raw rows")
         df = self.parse_all(df)
         df = self.fix_ram_storage_swap(df)
         df = df.drop(columns=["model_name", "scraped_at", "is_feature_phone"], errors="ignore")
+        logger.info(f"Cleaning complete. Returning {len(df)} rows.")
         return df

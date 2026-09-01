@@ -15,8 +15,10 @@ import hashlib
 import pandas as pd
 import re
 
+from core.logger import logger
 
-class specsbuilder:
+
+class SpecTextBuilder:
     LABEL_MAP = {
         'brand': ['brand'],
         'model_name': ['model name', 'model', 'model number'],
@@ -43,16 +45,11 @@ class specsbuilder:
         "sim_config", "color", "brand",
     }
 
-    def __init__(self, verbose: bool = True):
-        self.verbose = verbose
+    def __init__(self):
         self.raw_to_canon = {}
         for canon, variants in self.LABEL_MAP.items():
             for v in variants:
                 self.raw_to_canon[v.lower()] = canon
-
-    def _log(self, msg: str) -> None:
-        if self.verbose:
-            print(msg)
 
     # ---------- Step 2: parse freeform key_features_text ----------
     def parse_key_features(self, text: str) -> dict:
@@ -113,6 +110,7 @@ class specsbuilder:
 
     # ---------- full pipeline ----------
     def build_grouped(self, df: pd.DataFrame) -> pd.DataFrame:
+        logger.info(f"Building grouped RAG dataset from {len(df)} raw spec rows")
         df = df.copy()
 
         # Step 2 + 3: parse key_features_text, merge parsed kf_* fields back
@@ -125,7 +123,7 @@ class specsbuilder:
 
         # Step 4: build spec_text
         text_cols = [c for c in df.columns if c not in self.EXCLUDE_COLS]
-        self._log(f"spec_text built from {len(text_cols)} columns")
+        logger.info(f"spec_text built from {len(text_cols)} columns")
         df["spec_text"] = df.apply(lambda row: self._row_to_spec_text(row, text_cols), axis=1)
 
         # Step 5: stable model_id (join key to phone_cleaned.csv variants)
@@ -145,20 +143,23 @@ class specsbuilder:
 
         # validation: catch both NaN and empty-string spec_text (the == 0 check misses NaN)
         empty_mask = grouped["spec_text"].isna() | (grouped["spec_text"].str.len() == 0)
-        self._log(f"Done. {grouped.shape[0]} unique models, {grouped.shape[1]} columns.")
-        self._log(f"Empty spec_text rows: {empty_mask.sum()}")
+        logger.info(f"Done. {grouped.shape[0]} unique models, {grouped.shape[1]} columns.")
+
         if empty_mask.sum() > 0:
-            self._log("Models with empty spec_text (need investigation):")
-            self._log(grouped.loc[empty_mask, ["brand", "model"]].to_string())
+            logger.warning(f"{empty_mask.sum()} models have empty spec_text (need investigation)")
+            logger.warning(f"Affected models:\n{grouped.loc[empty_mask, ['brand', 'model']].to_string()}")
+        else:
+            logger.info("No empty spec_text rows found.")
 
         return grouped
 
 
 if __name__ == "__main__":
-    df = pd.read_csv("phone_with_specs.csv")
+    df = pd.read_csv("../data/raw_data/phone_with_specs.csv")
 
-    builder = SpecTextBuilder(verbose=True)
+    builder = SpecTextBuilder()
     grouped = builder.build_grouped(df)
 
-    grouped.to_csv("phones_grouped_for_rag.csv", index=False)
-    print(f"\nSaved phones_grouped_for_rag.csv ({len(grouped)} rows)")
+    output_path = "../data/processed_data/phones_grouped_for_rag.csv"
+    grouped.to_csv(output_path, index=False)
+    logger.info(f"Saved {output_path} ({len(grouped)} rows)")
