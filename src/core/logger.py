@@ -1,4 +1,4 @@
-# core/logger.py — adopt as-is, just rename "MedicalRAG" → your app name
+# core/logger.py
 import logging
 import sys
 from pathlib import Path

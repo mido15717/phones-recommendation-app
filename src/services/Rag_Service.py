@@ -5,7 +5,7 @@ import pandas as pd
 from services.text_embedder import TextEmbedder
 from services.VectorStore import VectorStore
 from core.logger import logger
-
+from helpers.config import get_settings
 
 class RAGService:
 
@@ -14,8 +14,9 @@ class RAGService:
         embedder: TextEmbedder = None,
         vector_store: VectorStore = None
     ):
-        self.embedder = embedder or TextEmbedder()
-        self.vector_store = vector_store or VectorStore()
+        settings = get_settings()
+        self.embedder = embedder or TextEmbedder(model_name=settings.MODEL_NAME)
+        self.vector_store = vector_store or VectorStore(persist_directory=settings.PERSIST_DIRECTORY)
 
     def index_phones(self, grouped_df: pd.DataFrame) -> int:
 

@@ -1,5 +1,7 @@
+# services/data_cleaning_service.py — add model_id generation
 import pandas as pd
 from core.logger import logger
+from core.identifiers import make_model_id
 
 
 class DataCleaningService:
@@ -67,10 +69,11 @@ class DataCleaningService:
         return df
 
     def clean(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Full pipeline: parse model names, fix RAM/storage swaps, drop scrape metadata."""
+        """Full pipeline: parse model names, fix RAM/storage swaps, add model_id, drop scrape metadata."""
         logger.info(f"Starting cleaning pipeline on {len(df)} raw rows")
         df = self.parse_all(df)
         df = self.fix_ram_storage_swap(df)
+        df["model_id"] = df.apply(lambda r: make_model_id(r["brand"], r["model"]), axis=1)
         df = df.drop(columns=["model_name", "scraped_at", "is_feature_phone"], errors="ignore")
         logger.info(f"Cleaning complete. Returning {len(df)} rows.")
         return df
