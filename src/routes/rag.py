@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from models.chat import ChatRecommendationRequest, ChatTurnRequest
 from services.Rag_Service import RAGService
+from services.chat_recommendation_service import ChatRecommendationService
 from services.recommendation_service import RecommendationService
 
 router = APIRouter(
@@ -12,6 +14,9 @@ def get_rag_service(request: Request) -> RAGService:
 
 def get_recommendation_service(request: Request) -> RecommendationService:
     return request.app.state.recommendation_service
+
+def get_chat_recommendation_service(request: Request) -> ChatRecommendationService:
+    return request.app.state.chat_recommendation_service
 
 @router.get("/search")
 def search_phones(query: str, top_k: int = 5, rag: RAGService = Depends(get_rag_service)):
@@ -34,3 +39,34 @@ def recommend_phones(
         min_storage=min_storage, min_ram=min_ram,
         network=network, category=category, top_k=top_k,
     )
+
+@router.post("/chat/recommend")
+def chat_recommend_phones(
+    payload: ChatRecommendationRequest,
+    service: ChatRecommendationService = Depends(get_chat_recommendation_service),
+):
+    try:
+        return service.recommend(
+            message=payload.message,
+            top_k=payload.top_k,
+            explicit_preferences=payload.preferences,
+        )
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+@router.post("/chat/turn")
+def chat_turn(
+    payload: ChatTurnRequest,
+    service: ChatRecommendationService = Depends(get_chat_recommendation_service),
+):
+    try:
+        return service.chat_turn(
+            message=payload.message,
+            history=payload.history,
+            preferences=payload.preferences,
+            use_case=payload.use_case,
+            completed_slots=payload.completed_slots,
+            top_k=payload.top_k,
+        )
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error

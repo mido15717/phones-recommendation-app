@@ -1,9 +1,10 @@
 # helpers/llm_finder.py
-from typing import Optional, List
-from langchain_openai import ChatOpenAI
+from typing import Optional, List, TYPE_CHECKING
 from langchain_core.language_models import BaseChatModel
-from langchain_ollama import ChatOllama
 from core.logger import logger
+
+if TYPE_CHECKING:
+    from helpers.config import Settings
 
 
 class LLMFinder:
@@ -19,8 +20,8 @@ class LLMFinder:
     @staticmethod
     def connect_via_api(
         api_key: str,
-        model_name: str = "gpt-3.5-turbo",
-        temperature: float = 3.0,
+        model_name: str,
+        temperature: float = 0.0,
         base_url: Optional[str] = None
     ) -> Optional[BaseChatModel]:
         """
@@ -49,6 +50,8 @@ class LLMFinder:
             temperature = 2.0
 
         try:
+            from langchain_openai import ChatOpenAI
+
             logger.info(f"Connecting to API LLM: {model_name}")
             return ChatOpenAI(
                 model=model_name,
@@ -88,7 +91,7 @@ class LLMFinder:
 
     @staticmethod
     def connect_local(
-        temperature: float = 3.0
+        temperature: float = 0.0
     ) -> Optional[BaseChatModel]:
         """
         Discovers local models, lists them, and asks the user to choose one.
@@ -128,6 +131,8 @@ class LLMFinder:
             selected_model = models[choice_idx]
             logger.info(f"User selected local model: {selected_model}")
 
+            from langchain_ollama import ChatOllama
+
             # Ollama temperature typically works best between 0.0 and 1.0,
             # but we pass the user's value (default 3.0) as requested.
             return ChatOllama(
@@ -141,6 +146,40 @@ class LLMFinder:
         except KeyboardInterrupt:
             logger.warning("User cancelled the selection.")
             return None
+
+    @staticmethod
+    def connect_from_settings(settings: "Settings") -> Optional[BaseChatModel]:
+        """Create a non-interactive LLM client suitable for the web API."""
+        provider = settings.AI_PROVIDER.strip().lower()
+
+        if provider == "openai":
+            if not settings.API_KEY or not settings.LLM_MODEL:
+                logger.error("OpenAI requires API_KEY and LLM_MODEL in .env.")
+                return None
+            return LLMFinder.connect_via_api(
+                api_key=settings.API_KEY,
+                model_name=settings.LLM_MODEL,
+                temperature=settings.LLM_TEMPERATURE,
+                base_url=settings.LLM_BASE_URL,
+            )
+
+        if provider == "ollama":
+            if not settings.LLM_MODEL:
+                logger.error("Ollama requires LLM_MODEL in .env.")
+                return None
+            try:
+                from langchain_ollama import ChatOllama
+                return ChatOllama(
+                    model=settings.LLM_MODEL,
+                    temperature=settings.LLM_TEMPERATURE,
+                    base_url=settings.LLM_BASE_URL,
+                )
+            except Exception as error:
+                logger.error(f"Failed to connect to Ollama: {error}")
+                return None
+
+        logger.error("AI_PROVIDER must be either 'openai' or 'ollama'.")
+        return None
 
 
 
@@ -160,4 +199,3 @@ if __name__ == "__main__":
     llm_local = finder.connect_local()
     if llm_local:
         print(f"Successfully connected to local LLM: {llm_local.model}")
-        

@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from helpers.config import get_settings
 from core.logger import logger
 from services.Rag_Service import RAGService
+from services.chat_recommendation_service import ChatRecommendationService
 from services.recommendation_service import RecommendationService
 from routes import base, rag
 
@@ -28,6 +29,10 @@ async def lifespan(app: FastAPI):
 
     app.state.recommendation_service = RecommendationService(
         rag_service=app.state.rag_service,
+        grouped_df=app.state.grouped_df,
+    )
+    app.state.chat_recommendation_service = ChatRecommendationService(
+        recommendation_service=app.state.recommendation_service,
         grouped_df=app.state.grouped_df,
     )
 
