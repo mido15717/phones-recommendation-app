@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     API_KEY: str
     FILE_ALLOWED_EXTENSIONS: list[str]
     FILE_MAX_SIZE: int
+    DATAFRAME_RAW_LOCATION: str
+    DATAFRAME_PROCESSED_LOCATION: str
 
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

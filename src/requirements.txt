@@ -10,4 +10,4 @@ langchain_openai==1.6.0
 langchain_community==0.4.2
 langchain_core==1.6.1
 ollama==0.6.2
-
+streamlit==1.63.0

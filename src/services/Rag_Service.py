@@ -34,21 +34,34 @@ class RAGService:
 
         logger.info(f"Indexing {len(valid)} phones")
 
-        texts = valid["spec_text"].tolist()
+        ids = valid["model_id"].astype(str).tolist()
 
+        logger.info(f"Number of valid rows: {len(valid)}")
+        logger.info(f"Number of IDs: {len(ids)}")
+        logger.info(f"Number of unique IDs: {len(set(ids))}")
+
+        duplicates = valid[
+                valid["model_id"].astype(str).duplicated(keep=False)
+            ]
+
+        if not duplicates.empty:
+            logger.error(
+                f"Duplicate model IDs detected:\n"
+                f"{duplicates[['model_id', 'brand', 'model']].to_string(index=False)}"
+            )
+
+            raise ValueError( "Duplicate model_ids found in grouped_df. " "Fix the dataset before indexing." )
+
+        texts = valid["spec_text"].tolist()
         embeddings = self.embedder.encode(texts).tolist()
+        ids = valid["model_id"].astype(str).tolist()
 
         metadatas = valid[
-            [
-                "brand",
-                "model",
-                "price_min",
-                "price_max",
-                "in_stock"
-            ]
+            ["brand", "model", "price_min", "price_max", "in_stock"]
         ].to_dict("records")
 
-        ids = valid["model_id"].astype(str).tolist()
+        for meta, model_id in zip(metadatas, ids):
+            meta["model_id"] = model_id
 
         self.vector_store.upsert(
             ids=ids,

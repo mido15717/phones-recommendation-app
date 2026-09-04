@@ -690,6 +690,16 @@ class SpecTextBuilder:
         # -----------------------------------------------------
 
         aggregation = {
+
+            "brand": (
+        "brand",
+        "first",
+        ),
+
+            "model":     (
+        "model",
+        "first",
+            ),
             "price_egp": (
                 "price_egp",
                 "min",
@@ -758,8 +768,6 @@ class SpecTextBuilder:
             .groupby(
                 [
                     "model_id",
-                    "brand",
-                    "model",
                 ],
                 dropna=False,
             )

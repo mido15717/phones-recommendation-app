@@ -1,16 +1,36 @@
-from fastapi import APIRouter, Depends
-from helpers.config import get_settings, Settings
+from fastapi import APIRouter, Depends, Request
 from services.Rag_Service import RAGService
+from services.recommendation_service import RecommendationService
 
 router = APIRouter(
     prefix="/api/v1/rag",
-    tags=["api_v1","rag"],
+    tags=["api_v1", "rag"],
 )
 
-def get_rag_service() -> RAGService:
-    return RAGService()
+def get_rag_service(request: Request) -> RAGService:
+    return request.app.state.rag_service
+
+def get_recommendation_service(request: Request) -> RecommendationService:
+    return request.app.state.recommendation_service
 
 @router.get("/search")
 def search_phones(query: str, top_k: int = 5, rag: RAGService = Depends(get_rag_service)):
-    results = rag.retrieve(query, top_k=top_k)
-    return results
+    return rag.retrieve(query, top_k=top_k)
+
+@router.get("/recommend")
+def recommend_phones(
+    query: str,
+    budget: float | None = None,
+    brand: str | None = None,
+    min_storage: float | None = None,
+    min_ram: float | None = None,
+    network: str | None = None,
+    category: str | None = None,
+    top_k: int = 5,
+    service: RecommendationService = Depends(get_recommendation_service),
+):
+    return service.hybrid_retrieve(
+        query=query, budget=budget, brand=brand,
+        min_storage=min_storage, min_ram=min_ram,
+        network=network, category=category, top_k=top_k,
+    )

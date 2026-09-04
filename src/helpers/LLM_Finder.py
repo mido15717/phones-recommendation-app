@@ -1,8 +1,8 @@
 # helpers/llm_finder.py
 from typing import Optional, List
 from langchain_openai import ChatOpenAI
-from langchain_community.chat_models import ChatOllama
 from langchain_core.language_models import BaseChatModel
+from langchain_ollama import ChatOllama
 from core.logger import logger
 
 
@@ -141,3 +141,23 @@ class LLMFinder:
         except KeyboardInterrupt:
             logger.warning("User cancelled the selection.")
             return None
+
+
+
+if __name__ == "__main__":
+    finder = LLMFinder()
+
+    # Example usage: Connect via API
+    api_key = input("Enter your OpenAI API key (or leave blank to skip): ").strip()
+    if api_key:
+        llm_api = finder.connect_via_api(api_key=api_key)
+        if llm_api:
+            print(f"Successfully connected to API LLM: {llm_api.model}")
+        else:
+            print("Failed to connect via API.")
+
+    # Example usage: Connect to local Ollama model
+    llm_local = finder.connect_local()
+    if llm_local:
+        print(f"Successfully connected to local LLM: {llm_local.model}")
+        

@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 
+from services.VectorStore import VectorStore
 from services.Rag_Service import RAGService
 from core.logger import logger
 
@@ -15,9 +16,11 @@ class RecommendationService:
     def __init__(
         self,
         rag_service: RAGService | None = None,
+        vector_store: VectorStore | None = None,
         grouped_df: pd.DataFrame | None = None,
     ):
         self.rag = rag_service or RAGService()
+        self.vector_store = vector_store or self.rag.vector_store
         self.grouped_df = grouped_df
 
     # ============================================================
@@ -183,6 +186,8 @@ class RecommendationService:
 
         if budget is not None:
 
+            candidates = candidates.copy()
+
             candidates["price_min"] = pd.to_numeric(
                 candidates["price_min"],
                 errors="coerce",
@@ -248,7 +253,7 @@ class RecommendationService:
         return candidates
 
     # ============================================================
-    # Hybrid retrieval
+    # Hybrid retrieval (structured filter -> ANN vector search)
     # ============================================================
 
     def hybrid_retrieve(
@@ -274,13 +279,10 @@ class RecommendationService:
           Structured filters
                  |
                  v
-          Candidate phones
+          Candidate model_ids
                  |
                  v
-          Semantic similarity
-                 |
-                 v
-             Ranking
+          ANN vector search (Chroma), restricted to candidate_ids
                  |
                  v
               Top K
@@ -291,9 +293,11 @@ class RecommendationService:
             return []
 
         if self.grouped_df is None:
-            logger.error(
-                "grouped_df has not been provided."
-            )
+            logger.error("grouped_df has not been provided.")
+            return []
+
+        if self.vector_store is None:
+            logger.error("No vector store available.")
             return []
 
         # --------------------------------------------------------
@@ -312,84 +316,67 @@ class RecommendationService:
         )
 
         if candidates.empty:
+            logger.info("No phones matched the structured filters.")
+            return []
+
+        candidate_ids = candidates["model_id"].astype(str).tolist()
+
+        # --------------------------------------------------------
+        # 2. Embed the query once
+        # --------------------------------------------------------
+
+        query_embedding = self.rag.embedder.encode_query(query).tolist()
+
+        # --------------------------------------------------------
+        # 3. ANN search restricted to the filtered candidates
+        # --------------------------------------------------------
+
+        chroma_results = self.vector_store.query(
+            query_embedding,
+            top_k=top_k,
+            where={"model_id": {"$in": candidate_ids}},
+        )
+
+        ids = chroma_results.get("ids", [[]])[0]
+        distances = chroma_results.get("distances", [[]])[0]
+
+        if not ids:
             logger.info(
-                "No phones matched the structured filters."
+                "Vector store returned no matches for the filtered candidates."
             )
             return []
 
         # --------------------------------------------------------
-        # 2. Semantic similarity
-        #
-        # We embed the query and compare it against spec_text.
+        # 4. Assemble results
         # --------------------------------------------------------
 
-        query_embedding = self.rag.embedder.encode(
-            [query]
-        )[0]
-
-        phone_texts = (
-            candidates["spec_text"]
-            .fillna("")
-            .astype(str)
-            .tolist()
+        candidates_indexed = candidates.set_index(
+            candidates["model_id"].astype(str)
         )
-
-        phone_embeddings = self.rag.embedder.encode(
-            phone_texts
-        )
-
-        # --------------------------------------------------------
-        # 3. Cosine similarity
-        # --------------------------------------------------------
-
-        similarities = self._cosine_similarity(
-            query_embedding,
-            phone_embeddings,
-        )
-
-        candidates = candidates.copy()
-
-        candidates["semantic_score"] = similarities
-
-        # --------------------------------------------------------
-        # 4. Sort by semantic relevance
-        # --------------------------------------------------------
-
-        candidates = candidates.sort_values(
-            by="semantic_score",
-            ascending=False,
-        )
-
-        # --------------------------------------------------------
-        # 5. Return top K
-        # --------------------------------------------------------
 
         results = []
 
-        for _, row in candidates.head(top_k).iterrows():
+        for model_id, distance in zip(ids, distances):
+
+            if model_id not in candidates_indexed.index:
+                continue
+
+            row = candidates_indexed.loc[model_id]
 
             result = {
-                "model_id": str(row["model_id"]),
-                "brand": row["brand"],
-                "model": row["model"],
-                "price_min": row["price_min"],
-                "price_max": row["price_max"],
-                "storage_options": self._parse_list(
-                    row["storage_options"]
-                ),
-                "ram_options": self._parse_list(
-                    row["ram_options"]
-                ),
-                "network": self._parse_list(
-                    row["network"]
-                ),
-                "category": row["category"],
-                "in_stock": row["in_stock"],
-                "semantic_score": float(
-                    row["semantic_score"]
-                ),
-                "spec_text": row["spec_text"],
-            }
+      "model_id": str(model_id),
+      "brand": str(row["brand"]),
+      "model": str(row["model"]),
+      "price_min": float(row["price_min"]) if pd.notna(row["price_min"]) else None,
+      "price_max": float(row["price_max"]) if pd.notna(row["price_max"]) else None,
+      "storage_options": self._parse_list(row["storage_options"]),
+      "ram_options": self._parse_list(row["ram_options"]),
+      "network": self._parse_list(row["network"]),
+      "category": str(row["category"]) if pd.notna(row["category"]) else None,
+      "in_stock": bool(row["in_stock"]),
+      "semantic_score": 1 - float(distance),
+      "spec_text": str(row["spec_text"]) if pd.notna(row["spec_text"]) else "",
+        }
 
             results.append(result)
 
@@ -399,56 +386,22 @@ class RecommendationService:
 
         return results
 
-    # ============================================================
-    # Cosine similarity
-    # ============================================================
 
-    @staticmethod
-    def _cosine_similarity(
-        query_embedding,
-        embeddings,
-    ):
-        """
-        Calculate cosine similarity between one query embedding
-        and multiple phone embeddings.
-        """
 
-        import numpy as np
+# if __name__ == "__main__":
+#     from pathlib import Path
 
-        query_embedding = np.asarray(
-            query_embedding,
-            dtype=float,
-        )
+#     BASE_DIR = Path(__file__).resolve().parent.parent  # -> src/
 
-        embeddings = np.asarray(
-            embeddings,
-            dtype=float,
-        )
+#     input_path = BASE_DIR / "data" / "processed_data" / "phones_grouped_for_rag_v1.csv"
 
-        query_norm = np.linalg.norm(
-            query_embedding
-        )
 
-        embedding_norms = np.linalg.norm(
-            embeddings,
-            axis=1,
-        )
+#     logger.info(f"Loading {input_path}")
 
-        # Avoid division by zero
-        if query_norm == 0:
-            return np.zeros(len(embeddings))
+#     grouped_df = pd.read_csv(input_path)
 
-        embedding_norms = np.where(
-            embedding_norms == 0,
-            1,
-            embedding_norms,
-        )
+#     duplicates = grouped_df[
+#     grouped_df["model_id"].duplicated(keep=False)
+# ].sort_values("model_id")
 
-        scores = np.dot(
-            embeddings,
-            query_embedding,
-        ) / (
-            embedding_norms * query_norm
-        )
-
-        return scores
+# print(duplicates[["model_id", "brand", "model"]])

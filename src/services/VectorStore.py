@@ -5,8 +5,11 @@ class VectorStore:
 
     def __init__(self, persist_directory: str, collection_name: str = "phones") -> None:
         logger.info("Initializing ChromaDB client")
-        self.client = chromadb.PersistentClient(path=persist_directory)        
-        self.collection = self.client.get_or_create_collection(name=collection_name)
+        self.client = chromadb.PersistentClient(path=persist_directory)
+        self.collection = self.client.get_or_create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
 
     def upsert(self, ids: list[str], texts: list[str], embeddings, metadatas: list[dict]):
         # upsert, not add — safe to re-run on updated data without duplicating
