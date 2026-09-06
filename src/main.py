@@ -16,6 +16,7 @@ async def lifespan(app: FastAPI):
 
     app.state.rag_service = RAGService()
     app.state.grouped_df = pd.read_csv(settings.DATAFRAME_PROCESSED_LOCATION)
+    app.state.cleaned_df = pd.read_csv(settings.DATAFRAME_CLEANED_LOCATION)  
 
     indexed_count = app.state.rag_service.vector_store.count()
     expected_count = len(app.state.grouped_df)

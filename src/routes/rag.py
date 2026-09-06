@@ -3,6 +3,7 @@ from models.chat import ChatRecommendationRequest, ChatTurnRequest
 from services.Rag_Service import RAGService
 from services.chat_recommendation_service import ChatRecommendationService
 from services.recommendation_service import RecommendationService
+from helpers.LLM_Finder import LLMFinder          
 
 router = APIRouter(
     prefix="/api/v1/rag",
@@ -21,6 +22,10 @@ def get_chat_recommendation_service(request: Request) -> ChatRecommendationServi
 @router.get("/search")
 def search_phones(query: str, top_k: int = 5, rag: RAGService = Depends(get_rag_service)):
     return rag.retrieve(query, top_k=top_k)
+
+@router.get("/local-models")
+def list_local_models():
+    return {"models": LLMFinder.discover_local_models()}
 
 @router.get("/recommend")
 def recommend_phones(
@@ -67,6 +72,7 @@ def chat_turn(
             use_case=payload.use_case,
             completed_slots=payload.completed_slots,
             top_k=payload.top_k,
+            llm_config=payload.llm_config,
         )
     except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error

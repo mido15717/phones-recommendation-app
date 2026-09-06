@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     LLM_MODEL: str = ""
     LLM_BASE_URL: str | None = None
     LLM_TEMPERATURE: float = 0.0
+    DATAFRAME_CLEANED_LOCATION: str
+    DATAFRAME_CLEANED_RAW_LOCATION: str
+    
 
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

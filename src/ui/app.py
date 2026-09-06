@@ -8,7 +8,7 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 GREETING = "Hi! I’ll help you find a phone. What budget are you working with in EGP?"
 
 
-st.set_page_config(page_title="Phone Recommendation Chat", page_icon="📱", layout="wide")
+st.set_page_config(page_title="Phone Recommendation Chat", layout="wide")
 
 st.markdown(
     """
@@ -54,6 +54,33 @@ if "messages" not in st.session_state:
     reset_conversation()
 
 with st.sidebar:
+    st.header("LLM settings")
+    provider = st.selectbox("Provider", ["openai", "ollama"])
+
+    api_key = None
+    if provider == "openai":
+        api_key = st.text_input("API key", type="password")
+        model_name = st.text_input("Model", value="gpt-4o-mini")
+    else:
+        try:
+            resp = requests.get(f"{API_BASE_URL}/api/v1/rag/local-models", timeout=10)
+            resp.raise_for_status()
+            local_models = resp.json().get("models", [])
+        except requests.RequestException:
+            local_models = []
+
+        if local_models:
+            model_name = st.selectbox("Model", local_models)
+        else:
+            st.caption("No local Ollama models found — is Ollama running?")
+            model_name = st.text_input("Model (type manually)", value="llama3")
+
+    st.session_state.llm_config = {
+        "provider": provider,
+        "api_key": api_key or None,
+        "model_name": model_name,
+    }
+
     st.header("Conversation settings")
     top_k = st.slider("Results to show", min_value=1, max_value=20, value=5)
     if st.button("Start a new conversation", use_container_width=True):
@@ -65,7 +92,7 @@ with st.sidebar:
     if completed:
         st.write(", ".join(slot.replace("_", " ") for slot in completed))
 
-st.title("📱 Find your next phone")
+st.title("Find your next phone")
 st.caption("Answer one short question at a time. Recommendations use only phones in the local dataset.")
 
 for item in st.session_state.messages:
@@ -84,6 +111,7 @@ if user_message := st.chat_input("Type your answer…"):
         "use_case": st.session_state.use_case,
         "completed_slots": st.session_state.completed_slots,
         "top_k": top_k,
+        "llm_config": st.session_state.llm_config,
     }
     try:
         with st.chat_message("assistant"), st.spinner("Thinking…"):

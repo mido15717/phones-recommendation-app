@@ -14,12 +14,20 @@ class PhonePreferences(BaseModel):
     category: str | None = None
     in_stock: bool | None = True
 
+class LLMConfig(BaseModel):
+    provider: Literal["openai", "ollama"] = "openai"
+    api_key: str | None = None
+    model_name: str | None = None
+    temperature: float = 0.0
+    base_url: str | None = None
 
 class ChatRecommendationRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2_000)
     top_k: int = Field(default=5, ge=1, le=20)
     # UI filters take precedence over values inferred from natural language.
     preferences: PhonePreferences | None = None
+    llm_config: LLMConfig | None = None
+
 
 
 class ChatMessage(BaseModel):
@@ -36,8 +44,9 @@ class ConversationTurn(BaseModel):
 
 class ChatTurnRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2_000)
-    history: list[ChatMessage] = Field(default_factory=list, max_length=20)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=30)
     preferences: PhonePreferences = Field(default_factory=PhonePreferences)
     use_case: str | None = None
     completed_slots: list[str] = Field(default_factory=list)
     top_k: int = Field(default=5, ge=1, le=20)
+    llm_config: LLMConfig | None = None
