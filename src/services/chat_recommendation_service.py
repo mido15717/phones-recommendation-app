@@ -10,7 +10,8 @@ from langchain_core.language_models import BaseChatModel
 from core.logger import logger
 from helpers.LLM_Finder import LLMFinder
 from helpers.config import get_settings
-from models.chat import ChatMessage, ConversationTurn, LLMConfig, PhonePreferences
+from models.chat import ChatMessage, ConversationTurn, LLMConfig, PhonePreferences,FollowUpTurn
+from services.lookup_service import ListingService
 from services.recommendation_service import RecommendationService
 
 
@@ -23,11 +24,24 @@ class ChatRecommendationService:
         self,
         recommendation_service: RecommendationService,
         grouped_df: pd.DataFrame,
+        listing_service: "ListingService | None" = None,
         llm: BaseChatModel | None = None,
     ) -> None:
         self.recommendation_service = recommendation_service
         self.llm = llm or LLMFinder.connect_from_settings(get_settings())
         self.options = self._build_options(grouped_df)
+        self.listing_service = listing_service
+
+    def _enrich_with_listings(self, phones: list[dict]) -> list[dict]:
+        if not self.listing_service:
+            return phones
+        enriched = []
+        for phone in phones:
+            listings = self.listing_service.get_listings(
+                brand=phone.get("brand", ""), model=phone.get("model", "")
+            )
+            enriched.append({**phone, "listings": listings})
+        return enriched
 
     @staticmethod
     def _build_options(df: pd.DataFrame) -> dict[str, Any]:
@@ -109,8 +123,8 @@ class ChatRecommendationService:
     the nearest listed value to whatever you infer or the user states.
     """.strip()
 
-    def _normalise(self, turn: ConversationTurn) -> ConversationTurn:
-        prefs = turn.preferences.model_copy()
+    def _normalise_preferences(self, prefs: PhonePreferences) -> PhonePreferences:
+        prefs = prefs.model_copy()
         if prefs.brand:
             match = get_close_matches(prefs.brand, self.options["brands"], n=1, cutoff=0.6)
             prefs.brand = match[0] if match else None
@@ -121,10 +135,20 @@ class ChatRecommendationService:
         if prefs.network:
             network = prefs.network.strip().upper()
             prefs.network = network if network in self.options["networks"] else None
-        llm_completed = set(turn.completed_slots) & self.REQUIRED_SLOTS
-        completed = sorted(llm_completed)
-        return turn.model_copy(update={"preferences": prefs, "completed_slots": completed})
+        return prefs
 
+    def _normalise(self, turn: ConversationTurn) -> ConversationTurn:
+        prefs = self._normalise_preferences(turn.preferences)
+
+        llm_completed = set(turn.completed_slots) & self.REQUIRED_SLOTS
+
+        return turn.model_copy(
+            update={
+                "preferences": prefs,
+                "completed_slots": sorted(llm_completed),
+            }
+        )
+    
     def _resolve_llm(self, llm_config: LLMConfig | None) -> BaseChatModel:
         if llm_config and (llm_config.api_key or llm_config.provider == "ollama"):
             if llm_config.provider == "openai":
@@ -208,14 +232,13 @@ class ChatRecommendationService:
         complete = self.REQUIRED_SLOTS.issubset(turn.completed_slots)
         recommendations: list[dict] = []
         if complete:
-            semantic_query = " ".join(
-                [item.content for item in history if item.role == "user"] + [message, turn.use_case or ""]
-            )
+            semantic_query = f"{turn.use_case or ''} {message}".strip()
             recommendations = self.recommendation_service.hybrid_retrieve(
                 query=semantic_query,
                 top_k=top_k,
                 **turn.preferences.model_dump(),
             )
+            recommendations = self._enrich_with_listings(recommendations) 
         return {
             "reply": turn.reply,
             "preferences": turn.preferences.model_dump(),
@@ -236,4 +259,102 @@ class ChatRecommendationService:
         phones = self.recommendation_service.hybrid_retrieve(
             query=message, top_k=top_k, **preferences.model_dump()
         )
+        phones = self._enrich_with_listings(phones)
         return {"filters": preferences.model_dump(), "recommendations": phones}
+
+    def _followup_system_prompt(self, preferences: PhonePreferences, recommendations: list[dict]) -> str:
+        def format_listings(phone: dict) -> str:
+            listings = phone.get("listings", [])
+            if not listings:
+                return "No live listings found."
+            return "; ".join(
+                f"{listing['storage_gb']:.0f}GB/{listing['ram_gb']:.0f}GB {listing['color']} — "
+                f"EGP {listing['price_egp']:,.0f} at {listing['seller_name']} "
+                f"({'in stock' if listing['in_stock'] else 'out of stock'}) — {listing['product_url']}"
+                for listing in listings[:3]
+            )
+
+        catalog = "\n\n".join(
+            f"{p.get('brand')} {p.get('model')}\n"
+            f"Specs: {p.get('spec_text') or 'No spec text available.'}\n"
+            f"Listings: {format_listings(p)}"
+            for p in recommendations
+        )
+        return f"""
+    You are helping a user who has already received a shortlist of recommended
+    phones. Every new message is one of exactly two intents:
+
+    1. answer_question — the user asks about specs, pricing, stock, or purchase
+    links for the phones already shown. Answer using ONLY the specs and
+    listings below. Never invent a price, URL, or spec not explicitly present.
+    If pricing/link info isn't available, say so honestly. Keep `preferences`
+    unchanged.
+
+    2. refine_search — the user wants to see DIFFERENT phones: cheaper, more
+    expensive but similar performance, a different brand, more storage, etc.
+    Adjust ONLY the preference(s) they're actually talking about:
+    - "cheaper" / "a bit less" (no number given) -> lower budget by ~15-20%
+    - "more expensive" / "a bit more" / "better performance" (no number) ->
+        raise budget by ~15-20%
+    - an explicit number/brand/spec -> use it exactly
+    Leave every other preference exactly as it currently is. Return the FULL
+    updated preferences object.
+
+    Current preferences: {preferences.model_dump()}
+
+    Phones currently shown to the user:
+    {catalog}
+
+    Decide the intent for this message and respond accordingly.
+    """.strip()
+
+    def handle_followup(
+        self,
+        message: str,
+        history: list[ChatMessage],
+        preferences: PhonePreferences,
+        recommendations: list[dict],
+        top_k: int,
+        llm_config: LLMConfig | None = None,
+    ) -> dict:
+        llm = self._resolve_llm(llm_config)
+        messages = [SystemMessage(content=self._followup_system_prompt(preferences, recommendations))]
+        messages.extend(
+            HumanMessage(content=item.content) if item.role == "user" else AIMessage(content=item.content)
+            for item in history
+        )
+        messages.append(HumanMessage(content=message))
+
+        try:
+            result = llm.with_structured_output(FollowUpTurn).invoke(messages)
+            if isinstance(result, dict):
+                result = FollowUpTurn(**result)
+            if not isinstance(result, FollowUpTurn):
+                raise TypeError("The LLM returned an unexpected follow-up format.")
+        except Exception as error:
+            logger.exception("Failed to process a follow-up turn.")
+            raise RuntimeError(f"Could not understand the follow-up request. {error}") from error
+
+        if result.intent == "refine_search":
+            new_prefs = self._normalise_preferences(result.preferences)
+            semantic_query = " ".join(
+                [item.content for item in history if item.role == "user"] + [message]
+            )
+            previous_ids = [p["model_id"] for p in recommendations]
+            new_recommendations = self.recommendation_service.hybrid_retrieve(
+                query=semantic_query, top_k=top_k, exclude_ids=previous_ids, **new_prefs.model_dump()
+            )
+            new_recommendations = self._enrich_with_listings(new_recommendations)
+            return {
+                "reply": result.reply,
+                "preferences": new_prefs.model_dump(),
+                "recommendations": new_recommendations,
+                "intent": "refine_search",
+            }
+
+        return {
+            "reply": result.reply,
+            "preferences": preferences.model_dump(),
+            "recommendations": recommendations,
+            "intent": "answer_question",
+        }

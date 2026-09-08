@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from models.chat import ChatRecommendationRequest, ChatTurnRequest
+from models.chat import ChatRecommendationRequest, ChatTurnRequest, FollowUpRequest
 from services.Rag_Service import RAGService
 from services.chat_recommendation_service import ChatRecommendationService
 from services.recommendation_service import RecommendationService
@@ -71,6 +71,23 @@ def chat_turn(
             preferences=payload.preferences,
             use_case=payload.use_case,
             completed_slots=payload.completed_slots,
+            top_k=payload.top_k,
+            llm_config=payload.llm_config,
+        )
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+@router.post("/chat/followup")
+def chat_followup(
+    payload: FollowUpRequest,
+    service: ChatRecommendationService = Depends(get_chat_recommendation_service),
+):
+    try:
+        return service.handle_followup(
+            message=payload.message,
+            history=payload.history,
+            preferences=payload.preferences,
+            recommendations=payload.recommendations,
             top_k=payload.top_k,
             llm_config=payload.llm_config,
         )

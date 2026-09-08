@@ -28,6 +28,7 @@ def reset_conversation() -> None:
     st.session_state.use_case = None
     st.session_state.completed_slots = []
     st.session_state.recommendations = None
+    st.session_state.phase = "collecting"  # collecting -> post_recommendation
 
 
 def render_phone(phone: dict) -> None:
@@ -49,6 +50,21 @@ def render_phone(phone: dict) -> None:
     with st.expander("View specifications"):
         st.write(phone.get("spec_text", "No specifications available."))
 
+    listings = phone.get("listings", [])
+    if listings:
+        st.write("**Where to buy:**")
+        for listing in listings:
+            stock_label = "In stock" if listing["in_stock"] else "Out of stock"
+            storage = listing.get("storage_gb")
+            ram = listing.get("ram_gb")
+            variant = f"{storage:.0f}GB" if storage is not None else "?"
+            if ram is not None:
+                variant += f" / {ram:.0f}GB RAM"
+            color = listing.get("color") or ""
+            st.markdown(
+                f"- [{variant}{f', {color}' if color else ''}]({listing['product_url']}) "
+                f"— **EGP {listing['price_egp']:,.0f}** at {listing['seller_name']} — {stock_label}"
+            )
 
 if "messages" not in st.session_state:
     reset_conversation()
@@ -104,27 +120,45 @@ if user_message := st.chat_input("Type your answer…"):
     with st.chat_message("user"):
         st.write(user_message)
 
-    payload = {
-        "message": user_message,
-        "history": st.session_state.messages[:-1],
-        "preferences": st.session_state.preferences,
-        "use_case": st.session_state.use_case,
-        "completed_slots": st.session_state.completed_slots,
-        "top_k": top_k,
-        "llm_config": st.session_state.llm_config,
-    }
     try:
         with st.chat_message("assistant"), st.spinner("Thinking…"):
-            response = requests.post(f"{API_BASE_URL}/api/v1/rag/chat/turn", json=payload, timeout=60)
-            response.raise_for_status()
-            data = response.json()
-            st.write(data["reply"])
+            if st.session_state.phase == "post_recommendation":
+                payload = {
+                    "message": user_message,
+                    "history": st.session_state.messages[:-1],
+                    "preferences": st.session_state.preferences,
+                    "recommendations": st.session_state.recommendations or [],
+                    "top_k": top_k,
+                    "llm_config": st.session_state.llm_config,
+                }
+                response = requests.post(f"{API_BASE_URL}/api/v1/rag/chat/followup", json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                st.write(data["reply"])
+                st.session_state.preferences = data["preferences"]
+                st.session_state.recommendations = data["recommendations"]
+            else:
+                payload = {
+                    "message": user_message,
+                    "history": st.session_state.messages[:-1],
+                    "preferences": st.session_state.preferences,
+                    "use_case": st.session_state.use_case,
+                    "completed_slots": st.session_state.completed_slots,
+                    "top_k": top_k,
+                    "llm_config": st.session_state.llm_config,
+                }
+                response = requests.post(f"{API_BASE_URL}/api/v1/rag/chat/turn", json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                st.write(data["reply"])
+                st.session_state.preferences = data["preferences"]
+                st.session_state.use_case = data["use_case"]
+                st.session_state.completed_slots = data["completed_slots"]
+                if data["complete"]:
+                    st.session_state.recommendations = data["recommendations"]
+                    st.session_state.phase = "post_recommendation"
+
         st.session_state.messages.append({"role": "assistant", "content": data["reply"]})
-        st.session_state.preferences = data["preferences"]
-        st.session_state.use_case = data["use_case"]
-        st.session_state.completed_slots = data["completed_slots"]
-        if data["complete"]:
-            st.session_state.recommendations = data["recommendations"]
         st.rerun()
     except requests.RequestException as error:
         detail = "Check that the FastAPI server and LLM configuration are running."
@@ -133,8 +167,8 @@ if user_message := st.chat_input("Type your answer…"):
                 detail = error.response.json().get("detail", detail)
             except ValueError:
                 pass
-        st.error(f"I couldn’t continue the conversation: {detail}")
-
+        st.error(f"I couldn't continue the conversation: {detail}")
+        
 if st.session_state.recommendations is not None:
     st.divider()
     recommendations = st.session_state.recommendations

@@ -266,6 +266,7 @@ class RecommendationService:
         network: str | None = None,
         category: str | None = None,
         in_stock: bool | None = True,
+        exclude_ids: list[str] | None = None,
         top_k: int = 5,
     ) -> list[dict]:
         """
@@ -299,6 +300,7 @@ class RecommendationService:
         if self.vector_store is None:
             logger.error("No vector store available.")
             return []
+        
 
         # --------------------------------------------------------
         # 1. Structured filtering
@@ -314,6 +316,19 @@ class RecommendationService:
             category=category,
             in_stock=in_stock,
         )
+
+        if candidates.empty:
+            logger.info("No phones matched the structured filters.")
+            return []
+
+         # --------------------------------------------------------
+        # 1b. Exclude previously shown phones
+        # --------------------------------------------------------
+
+        if exclude_ids:
+            candidates = candidates[
+                ~candidates["model_id"].astype(str).isin(exclude_ids)
+            ]
 
         if candidates.empty:
             logger.info("No phones matched the structured filters.")

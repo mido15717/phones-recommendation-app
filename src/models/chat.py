@@ -50,3 +50,16 @@ class ChatTurnRequest(BaseModel):
     completed_slots: list[str] = Field(default_factory=list)
     top_k: int = Field(default=5, ge=1, le=20)
     llm_config: LLMConfig | None = None
+
+class FollowUpTurn(BaseModel):
+    intent: Literal["answer_question", "refine_search"]
+    reply: str
+    preferences: PhonePreferences  
+
+class FollowUpRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2_000)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=30)
+    preferences: PhonePreferences
+    recommendations: list[dict] = Field(default_factory=list)
+    top_k: int = Field(default=5, ge=1, le=20)
+    llm_config: LLMConfig | None = None

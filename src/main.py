@@ -1,3 +1,4 @@
+from services.lookup_service import ListingService
 from contextlib import asynccontextmanager
 
 import pandas as pd
@@ -16,17 +17,14 @@ async def lifespan(app: FastAPI):
 
     app.state.rag_service = RAGService()
     app.state.grouped_df = pd.read_csv(settings.DATAFRAME_PROCESSED_LOCATION)
-    app.state.cleaned_df = pd.read_csv(settings.DATAFRAME_CLEANED_LOCATION)  
+    app.state.cleaned_df = pd.read_csv(settings.DATAFRAME_CLEANED_LOCATION)
 
-    indexed_count = app.state.rag_service.vector_store.count()
-    expected_count = len(app.state.grouped_df)
+    logger.info(
+        f"Reindexing vector store with {len(app.state.grouped_df)} phones from current dataset."
+    )
+    app.state.rag_service.index_phones(app.state.grouped_df)
 
-    if indexed_count < expected_count:
-        logger.info(
-            f"Vector store has {indexed_count} items, "
-            f"expected {expected_count} — reindexing."
-        )
-        app.state.rag_service.index_phones(app.state.grouped_df)
+    app.state.listing_service = ListingService(cleaned_df=app.state.cleaned_df)
 
     app.state.recommendation_service = RecommendationService(
         rag_service=app.state.rag_service,
@@ -35,10 +33,10 @@ async def lifespan(app: FastAPI):
     app.state.chat_recommendation_service = ChatRecommendationService(
         recommendation_service=app.state.recommendation_service,
         grouped_df=app.state.grouped_df,
+        listing_service=app.state.listing_service,
     )
 
     yield
-
 
 app = FastAPI(lifespan=lifespan)
 
