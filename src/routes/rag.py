@@ -88,6 +88,25 @@ def chat_followup(
             history=payload.history,
             preferences=payload.preferences,
             recommendations=payload.recommendations,
+            comparison=payload.comparison,   
+            top_k=payload.top_k,
+            llm_config=payload.llm_config,
+        )
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+@router.post("/chat/followup")
+def chat_followup(
+    payload: FollowUpRequest,
+    service: ChatRecommendationService = Depends(get_chat_recommendation_service),
+):
+    try:
+        return service.handle_followup(
+            message=payload.message,
+            history=payload.history,
+            preferences=payload.preferences,
+            recommendations=payload.recommendations,
+            comparison=payload.comparison,
             top_k=payload.top_k,
             llm_config=payload.llm_config,
         )

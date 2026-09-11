@@ -23,6 +23,9 @@ class RecommendationService:
         self.vector_store = vector_store or self.rag.vector_store
         self.grouped_df = grouped_df
 
+        print("GROUPED DF SHAPE:", self.grouped_df.shape)
+        print("GROUPED DF COLUMNS:", self.grouped_df.columns.tolist())
+        print(self.grouped_df.head(2))
     # ============================================================
     # Helper functions
     # ============================================================
@@ -400,8 +403,6 @@ class RecommendationService:
         )
 
         return results
-
-
 
 # if __name__ == "__main__":
 #     from pathlib import Path

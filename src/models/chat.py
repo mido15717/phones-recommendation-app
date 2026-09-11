@@ -61,5 +61,11 @@ class FollowUpRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list, max_length=30)
     preferences: PhonePreferences
     recommendations: list[dict] = Field(default_factory=list)
+    comparison: dict | None = None
     top_k: int = Field(default=5, ge=1, le=20)
     llm_config: LLMConfig | None = None
+
+class PhoneComparison(BaseModel):
+    summary: str
+    top_pick: str | None = None
+    top_pick_reason: str | None = None

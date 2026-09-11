@@ -10,10 +10,11 @@ from langchain_core.language_models import BaseChatModel
 from core.logger import logger
 from helpers.LLM_Finder import LLMFinder
 from helpers.config import get_settings
-from models.chat import ChatMessage, ConversationTurn, LLMConfig, PhonePreferences,FollowUpTurn
+from models.chat import ChatMessage, ConversationTurn, LLMConfig, PhonePreferences,FollowUpTurn, PhoneComparison
 from services.lookup_service import ListingService
 from services.recommendation_service import RecommendationService
 
+EMPTY_COMPARISON: dict = {"summary": "", "top_pick": None, "top_pick_reason": None}
 
 class ChatRecommendationService:
     """A multi-turn phone assistant that calls RAG only after preference collection."""
@@ -56,6 +57,33 @@ class ChatRecommendationService:
             "price_min": float(pd.to_numeric(df["price_min"], errors="coerce").min()),
             "price_max": float(pd.to_numeric(df["price_max"], errors="coerce").max()),
         }
+    @staticmethod
+    def _format_listings(phone: dict, limit: int = 3, include_url: bool = False) -> str:
+        listings = phone.get("listings", [])
+        if not listings:
+            return "No live listings found."
+
+        parts = []
+        for listing in listings[:limit]:
+            storage = listing.get("storage_gb")
+            ram = listing.get("ram_gb")
+            color = listing.get("color")
+            price = listing.get("price_egp")
+            seller = listing.get("seller_name") or "unknown seller"
+            in_stock = listing.get("in_stock")
+
+            storage_str = f"{storage:.0f}GB" if storage is not None else "storage unspecified"
+            ram_str = f"{ram:.0f}GB RAM" if ram is not None else "RAM unspecified"
+            color_str = f" {color}" if color else ""
+            price_str = f"EGP {price:,.0f}" if price is not None else "price unavailable"
+            stock_str = "in stock" if in_stock else "out of stock"
+
+            line = f"{storage_str}/{ram_str}{color_str} — {price_str} at {seller} ({stock_str})"
+            if include_url and listing.get("product_url"):
+                line += f" — {listing['product_url']}"
+            parts.append(line)
+
+        return "; ".join(parts)
 
     def _system_prompt(
         self,
@@ -228,17 +256,35 @@ class ChatRecommendationService:
         top_k: int,
         llm_config: LLMConfig | None = None,
     ) -> dict:
+        llm = self._resolve_llm(llm_config)
         turn = self._invoke_turn(message, history, preferences, use_case, completed_slots, llm_config)
         complete = self.REQUIRED_SLOTS.issubset(turn.completed_slots)
         recommendations: list[dict] = []
+        comparison = dict(EMPTY_COMPARISON)
+
         if complete:
-            semantic_query = f"{turn.use_case or ''} {message}".strip()
+            semantic_query = turn.use_case or message
             recommendations = self.recommendation_service.hybrid_retrieve(
                 query=semantic_query,
                 top_k=top_k,
                 **turn.preferences.model_dump(),
             )
-            recommendations = self._enrich_with_listings(recommendations) 
+            recommendations = self._enrich_with_listings(recommendations)
+            if recommendations:
+                comparison = self._compare_phones(
+                    phones=recommendations, preferences=turn.preferences,
+                    use_case=turn.use_case, message=message, llm=llm,
+                )
+            else:
+                turn = turn.model_copy(update={
+                    "reply": (
+                        "I couldn't find any phones matching all of your preferences "
+                        f"(budget {turn.preferences.budget:.0f} EGP, brand {turn.preferences.brand or 'any'}, "
+                        f"network {turn.preferences.network or 'any'}). Want to try a higher budget, "
+                        "a different brand, or drop the network requirement?"
+                    )
+                })
+
         return {
             "reply": turn.reply,
             "preferences": turn.preferences.model_dump(),
@@ -246,6 +292,7 @@ class ChatRecommendationService:
             "completed_slots": turn.completed_slots,
             "complete": complete,
             "recommendations": recommendations,
+            "comparison": comparison,
         }
 
     def recommend(
@@ -263,22 +310,11 @@ class ChatRecommendationService:
         return {"filters": preferences.model_dump(), "recommendations": phones}
 
     def _followup_system_prompt(self, preferences: PhonePreferences, recommendations: list[dict]) -> str:
-        def format_listings(phone: dict) -> str:
-            listings = phone.get("listings", [])
-            if not listings:
-                return "No live listings found."
-            return "; ".join(
-                f"{listing['storage_gb']:.0f}GB/{listing['ram_gb']:.0f}GB {listing['color']} — "
-                f"EGP {listing['price_egp']:,.0f} at {listing['seller_name']} "
-                f"({'in stock' if listing['in_stock'] else 'out of stock'}) — {listing['product_url']}"
-                for listing in listings[:3]
-            )
-
         catalog = "\n\n".join(
-            f"{p.get('brand')} {p.get('model')}\n"
-            f"Specs: {p.get('spec_text') or 'No spec text available.'}\n"
-            f"Listings: {format_listings(p)}"
-            for p in recommendations
+            f"{phone.get('brand')} {phone.get('model')}\n"
+            f"Specs: {phone.get('spec_text') or 'No spec text available.'}\n"
+            f"Listings: {self._format_listings(phone, include_url=True)}"
+            for phone in recommendations
         )
         return f"""
     You are helping a user who has already received a shortlist of recommended
@@ -314,10 +350,12 @@ class ChatRecommendationService:
         history: list[ChatMessage],
         preferences: PhonePreferences,
         recommendations: list[dict],
+        comparison: dict | None,
         top_k: int,
         llm_config: LLMConfig | None = None,
     ) -> dict:
         llm = self._resolve_llm(llm_config)
+        current_comparison = comparison or dict(EMPTY_COMPARISON)
         messages = [SystemMessage(content=self._followup_system_prompt(preferences, recommendations))]
         messages.extend(
             HumanMessage(content=item.content) if item.role == "user" else AIMessage(content=item.content)
@@ -337,18 +375,25 @@ class ChatRecommendationService:
 
         if result.intent == "refine_search":
             new_prefs = self._normalise_preferences(result.preferences)
-            semantic_query = " ".join(
-                [item.content for item in history if item.role == "user"] + [message]
-            )
+            semantic_query = message
             previous_ids = [p["model_id"] for p in recommendations]
             new_recommendations = self.recommendation_service.hybrid_retrieve(
                 query=semantic_query, top_k=top_k, exclude_ids=previous_ids, **new_prefs.model_dump()
             )
             new_recommendations = self._enrich_with_listings(new_recommendations)
+            new_comparison = (
+                self._compare_phones(
+                    phones=new_recommendations, preferences=new_prefs,
+                    use_case=None, message=message, llm=llm,
+                )
+                if new_recommendations
+                else dict(EMPTY_COMPARISON)
+            )
             return {
                 "reply": result.reply,
                 "preferences": new_prefs.model_dump(),
                 "recommendations": new_recommendations,
+                "comparison": new_comparison,
                 "intent": "refine_search",
             }
 
@@ -356,5 +401,59 @@ class ChatRecommendationService:
             "reply": result.reply,
             "preferences": preferences.model_dump(),
             "recommendations": recommendations,
+            "comparison": current_comparison,
             "intent": "answer_question",
         }
+
+    def _compare_phones(
+    self,
+    phones: list[dict],
+    preferences: PhonePreferences,
+    use_case: str | None,
+    message: str,
+    llm: BaseChatModel,
+) -> dict:
+        if not phones:
+            return dict(EMPTY_COMPARISON)
+
+        catalog_text = "\n\n".join(
+            f"Option {index + 1}: {phone.get('brand')} {phone.get('model')}\n"
+            f"Specs: {phone.get('spec_text') or 'No spec text available.'}\n"
+            f"Listings: {self._format_listings(phone, include_url=True)}"
+            for index, phone in enumerate(phones)
+        )
+
+        prompt = f"""
+    You are comparing a shortlist of real phones for a specific user, based only
+    on the specs and listings given below. Do not invent or assume any spec,
+    price, or feature not present in the text.
+
+    User's use case: {use_case or 'unspecified'}
+    User's stated preferences: {preferences.model_dump()}
+    User's original message: "{message}"
+
+    Phone options:
+    {catalog_text}
+
+    Write a short, natural comparison (3-6 sentences) that highlights the key
+    differences between these specific phones that matter most for this user's
+    use case (e.g. camera quality, battery life, performance, display, storage,
+    price — whichever are relevant and actually present in the specs/listings).
+    Do not restate every spec verbatim; synthesize what's meaningfully different
+    between them.
+
+    Then pick ONE phone as the best overall fit for this user and briefly explain
+    why, referencing the specific specs or listing details that make it the right
+    choice for their stated needs.
+    """.strip()
+
+        try:
+            result = llm.with_structured_output(PhoneComparison).invoke([SystemMessage(content=prompt)])
+            if isinstance(result, dict):
+                result = PhoneComparison(**result)
+            if not isinstance(result, PhoneComparison):
+                raise TypeError("The LLM returned an unexpected comparison format.")
+            return result.model_dump()
+        except Exception:
+            logger.exception("Failed to compare retrieved phones.")
+            return dict(EMPTY_COMPARISON)
