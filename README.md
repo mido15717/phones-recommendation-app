@@ -29,7 +29,7 @@ The system uses a Retrieval-Augmented Generation (RAG) pipeline: it understands 
 
 4. Setup environment variables
 ```bash
-   $ cp .env .env.example
+   $ cp .env.example .env
 ```
 Set your environment variables in the .env like your API_KEY value.
 
