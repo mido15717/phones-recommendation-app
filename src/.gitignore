@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+venv/
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
+.env
+.env.example
+chroma_db/
+*.log
+.vscode/
+.idea/
+README.md
+LICENSE

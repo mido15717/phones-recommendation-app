@@ -3,7 +3,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
 
     container_name: phone-recommendation-api
 
@@ -22,7 +22,7 @@ services:
   ui:
     build:
       context: .
-      dockerfile: Dockerfile.ui
+      dockerfile: dockerfile.ui
 
     container_name: phone-recommendation-ui
 
