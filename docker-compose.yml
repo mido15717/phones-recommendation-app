@@ -11,10 +11,10 @@ services:
       - "8000:8000"
 
     env_file:
-      - .env
+      - ./src/.env
 
     volumes:
-      - chroma_data:/app/chroma_db
+      - chroma_data:/app/src/data/chromadb
 
     restart: unless-stopped
 

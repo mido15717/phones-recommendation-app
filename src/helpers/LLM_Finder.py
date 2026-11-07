@@ -77,7 +77,8 @@ class LLMFinder:
         """
         try:
             import ollama
-            response = ollama.list()
+            client = ollama.Client(host=base_url)
+            response = client.list()
             models = response.get("models", [])
             model_names = [m.get("name") for m in models if m.get("name")]
             logger.info(f"Discovered {len(model_names)} local Ollama models.")

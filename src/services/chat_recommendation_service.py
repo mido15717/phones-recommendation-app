@@ -195,7 +195,7 @@ class ChatRecommendationService:
                 llm = ChatOllama(
                     model=llm_config.model_name,
                     temperature=llm_config.temperature,
-                    base_url=llm_config.base_url,
+                    base_url=llm_config.base_url or "http://host.docker.internal:11434",
                 )
             else:
                 llm = None
@@ -320,18 +320,24 @@ class ChatRecommendationService:
     You are helping a user who has already received a shortlist of recommended
     phones. Every new message is one of exactly two intents:
 
-    1. answer_question — the user asks about specs, pricing, stock, or purchase
-    links for the phones already shown. Answer using ONLY the specs and
-    listings below. Never invent a price, URL, or spec not explicitly present.
-    If pricing/link info isn't available, say so honestly. Keep `preferences`
-    unchanged.
+    1. answer_question — the user asks about specs, pricing, stock, purchase
+    links, OR asks you to compare, rank, or evaluate the phones ALREADY SHOWN
+    below (e.g. "compare these", "which is better", "compare battery",
+    "great performance over price"). ANY question about the phones already
+    listed — including comparisons and evaluations — is answer_question.
+    NEVER treat a comparison/evaluation request as refine_search, even if it
+    mentions words like "performance" or "price". Answer using ONLY the specs
+    and listings below. Never invent a price, URL, or spec not explicitly
+    present. If pricing/link info isn't available, say so honestly. Keep
+    `preferences` unchanged.
 
-    2. refine_search — the user wants to see DIFFERENT phones: cheaper, more
-    expensive but similar performance, a different brand, more storage, etc.
+    2. refine_search — the user explicitly wants to see a DIFFERENT set of
+    phones: a different budget, a different brand, more storage, etc. This is
+    about changing search CRITERIA, not evaluating phones already shown.
     Adjust ONLY the preference(s) they're actually talking about:
     - "cheaper" / "a bit less" (no number given) -> lower budget by ~15-20%
-    - "more expensive" / "a bit more" / "better performance" (no number) ->
-        raise budget by ~15-20%
+    - "more expensive" / "show me pricier options" (no number) -> raise
+        budget by ~15-20%
     - an explicit number/brand/spec -> use it exactly
     Leave every other preference exactly as it currently is. Return the FULL
     updated preferences object.
@@ -374,7 +380,12 @@ class ChatRecommendationService:
             raise RuntimeError(f"Could not understand the follow-up request. {error}") from error
 
         if result.intent == "refine_search":
-            new_prefs = self._normalise_preferences(result.preferences)
+            values = result.preferences.model_dump()
+            previous_values = preferences.model_dump()
+            for field, previous_value in previous_values.items():
+                if values[field] is None:
+                    values[field] = previous_value
+            new_prefs = self._normalise_preferences(PhonePreferences(**values))
             semantic_query = message
             previous_ids = [p["model_id"] for p in recommendations]
             new_recommendations = self.recommendation_service.hybrid_retrieve(

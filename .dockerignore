@@ -5,3 +5,4 @@ src/venv/
 .git/
 .env
 src/logs/
+src/.env

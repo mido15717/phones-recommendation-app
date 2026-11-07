@@ -4,7 +4,14 @@ import requests
 import streamlit as st
 
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+def get_api_base_url() -> str:
+    try:
+        return st.secrets["API_BASE_URL"]
+    except Exception:
+        return os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+
+
+API_BASE_URL = get_api_base_url().rstrip("/")
 
 GREETING = (
     "Hi! I’ll help you find a phone. "
@@ -349,6 +356,11 @@ with st.sidebar:
         "provider": provider,
         "api_key": api_key or None,
         "model_name": model_name,
+         "base_url": (
+        "http://host.docker.internal:11434"
+        if provider == "ollama"
+        else None
+    ),
     }
 
     # ---------------------------------------------------------
